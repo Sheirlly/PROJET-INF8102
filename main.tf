@@ -1,10 +1,21 @@
+terraform {
+required_providers {
+aws = {
+source = "hashicorp/aws"
+version = "~> 5.19"
+    }
+  }
+}
+
 provider "aws" {
-  region = var.region
+  region = "us-east-1"
 }
 
 
-# Ajout de la source de donnees pour les zones de disponibilite AWS
-data "aws_availability_zones" "available" {}
+
+locals {
+   availability_zones = ["us-east-1a","us-east-1b"]
+}
 
 # Creation du VPC
 resource "aws_vpc" "main" {
@@ -40,7 +51,7 @@ resource "aws_route_table" "my_route_table" {
 resource "aws_subnet" "subnet1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[0]
+  availability_zone       = local.availability_zones[0]
   map_public_ip_on_launch = true
 
   tags = {
@@ -52,13 +63,22 @@ resource "aws_subnet" "subnet1" {
 resource "aws_subnet" "subnet2" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.2.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[1] 
+  availability_zone       = local.availability_zones[1]
   map_public_ip_on_launch = true
 
   tags = {
     Name = "subnet2"
   }
   
+}
+
+resource "aws_db_subnet_group" "aurora_subnet_group" {
+  name = "aurora_db_subnet_group"
+  description = "Allowed subnets for Aurora DB cluster instances"
+  subnet_ids = [
+    aws_subnet.subnet1.id,
+    aws_subnet.subnet2.id,
+  ]
 }
 
 # Route Table Association for Subnet1
@@ -209,7 +229,7 @@ resource "aws_launch_template" "moodle_lt" {
   }
 }  
 
-       user_data = <<-EOF
+         user_data = <<-EOF
               #!/bin/bash
               echo "Hello, World!"
               apt-get update
@@ -249,23 +269,12 @@ resource "aws_launch_template" "moodle_lt" {
 # Configuration AWS S3 Bucket
 resource "aws_s3_bucket" "moodle_s3" {
   bucket = "moodle-s3-bucket"
+ # region ="us-east-1"
 }
 #configuration des controles d"acces pour le bucket s3
 resource "aws_s3_bucket_acl" "moodle_s3_acl" {
   bucket = aws_s3_bucket.moodle_s3.bucket
   acl    = "private"
-}
-
-# Configuration du groupe de paramètres du cluster Aurora
-resource "aws_rds_cluster_parameter_group" "moodle_db_cluster_param_group" {
-  name        = "moodle-db-cluster-param-group"
-  family      = "aurora-mysql5.7"
-  description = "Parameter group for Moodle DB Cluster"
-
-  parameter {
-    name  = "instance_class"
-    value = "db.t3.small"
-  }
 }
   
 # Configuration AWS Security Group for RDS
@@ -291,16 +300,47 @@ resource "aws_security_group" "db_security_group" {
 resource "aws_rds_cluster" "moodle_db" {
   cluster_identifier       = "moodle-db-cluster"
   engine                   = "aurora-mysql"
-  availability_zones       = ["data.aws_availability_zones.available.names[0]", "data.aws_availability_zones.available.names[1]"]
+  engine_version           = "5.7.mysql_aurora.2.03.2"
+  availability_zones       = local.availability_zones
   database_name            = "moodle_db"
   master_username          = "Admin_DB_Inf8102"
   master_password          = "Admin_DB_Inf8102@2023"
   backup_retention_period  = 7
   preferred_backup_window  = "04:00-05:00"
+  db_subnet_group_name     = aws_db_subnet_group.aurora_subnet_group.name
   skip_final_snapshot      = true
   apply_immediately        = true
   vpc_security_group_ids   = [aws_security_group.db_security_group.id] 
 }
+
+resource "aws_rds_cluster_instance" "aurora_cluster_instance" {
+  count = 2
+
+  identifier = "aurora-instance-${count.index}"
+  cluster_identifier = aws_rds_cluster.moodle_db.id
+  engine = "aurora-mysql"
+  engine_version = "5.7.mysql_aurora.2.03.2"
+  instance_class = "db.t3.small"
+  db_subnet_group_name = aws_db_subnet_group.aurora_subnet_group.name
+  publicly_accessible = false
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Configuration du groupe de paramètres du cluster Aurora
+resource "aws_rds_cluster_parameter_group" "moodle_db_cluster_param_group" {
+  name        = "moodle-db-cluster-param-group"
+  family      = "aurora-mysql5.7"
+  description = "Parameter group for Moodle DB Cluster"
+
+  parameter {
+    name  = "instance_class"
+    value = "db.t3.small"
+  }
+}
+
 
 # Configuration AWS Elasticache
 resource "aws_elasticache_cluster" "moodle_cache" {
@@ -308,7 +348,7 @@ resource "aws_elasticache_cluster" "moodle_cache" {
   engine               = "redis"
   node_type            = "cache.t2.micro"
   num_cache_nodes      = 1
-  parameter_group_name = "default.redis5.0.cluster.on"
+  parameter_group_name = "default.redis7"
   subnet_group_name    = aws_elasticache_subnet_group.cache_subnet_group.name
 }
 
