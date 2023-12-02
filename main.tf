@@ -303,8 +303,8 @@ resource "aws_rds_cluster" "moodle_db" {
   engine_version           = "5.7.mysql_aurora.2.03.2"
   availability_zones       = local.availability_zones
   database_name            = "moodle_db"
-  master_username          = "Admin_DB_Inf8102"
-  master_password          = "Admin_DB_Inf8102@2023"
+  master_username          = "xxxxxxxxxxx"
+  master_password          = "xxxxx"
   backup_retention_period  = 7
   preferred_backup_window  = "04:00-05:00"
   db_subnet_group_name     = aws_db_subnet_group.aurora_subnet_group.name
